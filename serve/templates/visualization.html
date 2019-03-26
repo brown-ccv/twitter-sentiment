@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<script src="https://d3js.org/d3.v4.min.js"></script>
+
+<div class="heatmap"></div>
+<div class="settings">
+    <span id="settings-title"><b>Settings</b></span>
+    <span>Date Range:</span>
+    <input type="range" min="0" id="min-date">
+    <div id="date-labels"></div>
+    <input type="range" min="1" id="max-date">
+    <span>Number of Bins:</span>
+    <input type="range" min="1" max="21" value="11" step="2" id="num-bins">
+    <div id="bin-labels"></div>
+    <span class="wrapper">
+        <span id="hide-header">Hide Objective Tweets (score = 0):</span>
+        <input type="checkbox" value="0" id="hide-objective">
+    </span>
+</div>
+<div class="details">
+    <center>
+        <span id="tooltip">Click on a cell to see related Tweets.</span>
+        <b><span id="header"></span></b>
+    </center>
+</div>
+
+<style>
+
+    body {
+        margin: 0;
+        margin-top: 10px;
+    }
+
+    .settings {
+        width: 50%;
+        border-top: 3px solid black;
+        border-right: 2px solid black;
+        min-height: 200px;
+        margin-right: 0;
+        float: left;
+        padding-top: 5px;
+    }
+    
+    .settings input[type="range"] {
+        width: 90%;
+        margin-left: 5%;
+    }
+    
+    .wrapper {
+        width: 100%;
+        text-align: center;
+    }
+    
+    .settings-label {
+        font-size: 12px;
+        display: inline-block;
+        position: absolute;
+        transform: translateX(-50%);
+    }
+
+    #date-labels {
+        width: 90%;
+        height: 15px;
+        margin-left: 5%;
+    }
+    
+    #bin-labels {
+        width: 90%;
+        height: 15px;
+        margin-left: 5%;
+        margin-bottom: 10px;
+    }
+    
+    #num-bins {
+        margin-top: 5px;
+    }
+    
+    .settings span {
+        width: 100%;
+        display: block;
+        margin-top: 5px;
+        font-size: 14px;
+        text-align: center;
+    }
+    
+    #hide-header {
+        width: auto;
+        display: inline-block;
+    }
+    
+    #hide-objective {
+        transform: translateY(10%);
+    }
+    
+    .settings input {
+        margin-top: 0;
+    }
+    
+    #settings-title {
+        font-size: 18px;
+    }
+    
+    #date-range-container {
+        width: 100%;
+    }
+
+    .details {
+        width: calc(50% - 7px);
+        border-top: 3px solid black;
+        border-left: 2px solid black;
+        padding-top: 5px;
+        min-height: 200px;
+        margin-left: 50%;
+        padding-left: 5px;
+    }
+    
+    .details span {
+        width: 100%;
+        margin-bottom: 5px;
+        display: block;
+    }
+    
+    #tooltip {
+        color: grey;
+    }
+    
+    #header {
+        display: none;
+        font-size: 18px;
+        font-weight: bold;
+    }
+    
+    center {
+        margin-bottom: 10px;
+    }
+</style>
+
+<script>
+
+    /*
+    
+    
+        CONSTANTS AND SETTINGS
+    
+    
+    */
+    
+    let COLOR_BAR = [
+        { val : 0, r : 0, g : 0, b : 143},
+        { val : 0.5, r : 143, g : 255, b : 112},
+        { val : 1, r : 128, g : 0, b : 0},
+    ];
+    let height = 550;
+    let width = 1400;
+    let leftMargin = 150;
+    let rightMargin = 150;
+    let bottomMargin = 60;
+    let topMargin = 50;
+    let margin = 50;
+
+    /*
+    
+    
+        DATA PROCESSING
+    
+    
+    */
+
+    let data = {{ data | safe }};
+    
+    let min = -1;
+    let max = -1;
+    
+    for (let i = 0; i < data.length; i++) {
+        if (data[i][0] < min || min == -1) {
+            min = data[i][0];
+        }
+        if (data[i][0] > max || max == -1) {
+            max = data[i][0];
+        }
+    }
+    
+    let minD = new Date(min * 1000);
+    minD.setDate(minD.getDate() - minD.getDay());
+    
+    let maxD = new Date(max * 1000);
+    maxD.setDate(maxD.getDate() - maxD.getDay());
+    
+    let milli2week = 1000 * 60 * 60 * 24 * 7;
+    let weeks = [];
+    let numWeeks = Math.floor((maxD - minD) / milli2week);
+    
+    for (let i = 0; i <= numWeeks; i++) {
+        weeks[i] = [];
+    }
+    
+    for (let i = 0; i < data.length; i++) {
+        let date = new Date(data[i][0] * 1000);
+        if (date < minD) {
+            continue;
+        }
+        date.setDate(date.getDate() - date.getDay());
+        let week = Math.floor((date - minD) / milli2week);
+        weeks[week].push({
+            'text' : data[i][1],
+            'score' : data[i][2],
+        });
+    }
+    
+    let barData = [];
+    
+    for (let i = 0; i < height; i++) {
+        let pct = i / height;
+        barData.push(getColorLinear(pct));
+    }
+    
+    /*
+    
+    
+        HELPERS
+    
+    
+    */
+    
+    function getColorLinear(val) {
+        if (val < 0) {
+            return 'rgb(0, 0, 0)';
+        }
+        if (val >= 1.0) {
+            val = 1.0;
+        }
+        let bottom;
+        let top;
+        for (let i = 1; i < COLOR_BAR.length; i++) {
+            if (val <= COLOR_BAR[i]['val']) {
+                bottom = COLOR_BAR[i - 1];
+                top = COLOR_BAR[i];
+                break;
+            }
+        }
+        let pct = (val - bottom['val']) / (top['val'] - bottom['val']);
+        let r = (pct * (top['r'] - bottom['r'])) + bottom['r'];
+        let g = (pct * (top['g'] - bottom['g'])) + bottom['g'];
+        let b = (pct * (top['b'] - bottom['b'])) + bottom['b'];
+        return 'rgb(' + r + ', ' + g + ', ' + b + ')';
+    }
+
+    function getBin(score) {
+        let numBins = document.getElementById("num-bins").valueAsNumber;
+        let step = 2.0 / numBins;
+        for (let i = 0; i < numBins; i++) {
+            let top = (step * (i + 1)) - 1.0;
+            if (score < top) {
+                return i;
+            }
+        }
+        return numBins - 1; // if score is 1.0
+    }
+    
+    function getBinRange(bin) {
+        let numBins = document.getElementById("num-bins").valueAsNumber;
+        let step = 2.0 / numBins;
+        let btm = (bin * step) - 1.0;
+        return [Math.round(100 * btm) / 100, Math.round(100 * (btm + step)) / 100];
+    }
+    
+    function week2Date(week) {
+        let d = new Date(minD);
+        d.setDate(d.getDate() + (week * 7));
+        return d;
+    }
+    
+    /*
+    
+    
+        SETUP AND RENDERING
+    
+    
+    */
+    
+    function render() {
+    
+        document.getElementsByClassName("heatmap")[0].innerHTML = "";
+        
+        let selectedMin = document.getElementById("min-date").valueAsNumber;
+        let selectedMax = document.getElementById("max-date").valueAsNumber;
+        
+        if (selectedMin > selectedMax) {
+            let temp = selectedMax;
+            selectedMax = selectedMin;
+            selectedMin = temp;
+        }
+        
+        if (selectedMin == selectedMax) {
+            selectedMin = selectedMin - 1;
+        }
+        
+        let selectedWeeks = weeks.slice(selectedMin, selectedMax + 1);
+        let numBins = document.getElementById("num-bins").valueAsNumber;
+        let hideObjective = document.getElementById("hide-objective").checked;
+        
+        let colwidth = width / selectedWeeks.length;
+        let rowheight = height / numBins;
+        
+        var MIN_COUNT = -1;
+        var MAX_COUNT = -1;
+        var color_scale;
+        
+        d3.select(".heatmap").append('svg')
+            .attr("width", width + leftMargin + rightMargin)
+            .attr("height", height + topMargin + bottomMargin)
+            .style("background", "white")
+            .style("margin-left", "auto")
+            .style("margin-right", "auto")
+            .style("display", "block")
+            .selectAll("svg").data(selectedWeeks)
+            .enter().append("svg")
+                .attr('width', colwidth)
+                .attr('height', height)
+                .attr('x',  function(d, i) {
+                    return (i * colwidth) + leftMargin;
+                })
+                .attr('y', topMargin)
+                .selectAll('rect').data(function(d, i) {
+                    let newD = []
+                    for (let k = 0; k < numBins; k++) {
+                        // weird way to embed the week value here, but we need it later
+                        // and I'm not sure how else to setup future access to it
+                        newD.push({
+                            'tweets' : [],
+                            'week' : i
+                        });
+                    }
+                    for (let i = 0; i < d.length; i++) {
+                        if (hideObjective && d[i]['score'] == 0) {
+                            continue
+                        }
+                        let bin = getBin(d[i]['score']);
+                        newD[bin]['tweets'].push(d[i]);
+                    }
+                    for (let i = 0; i < numBins; i++) {
+                        let cnt = newD[i]['tweets'].length;
+                        if (cnt > MAX_COUNT || cnt < MIN_COUNT || MIN_COUNT == -1) {
+                            if (cnt > MAX_COUNT) {
+                                MAX_COUNT = cnt;
+                            }
+                            else {
+                                if (cnt == 0) {
+                                    cnt = 1;
+                                }
+                                MIN_COUNT = cnt;
+                            }
+                        }
+                    }
+                    return newD;
+                })
+                .call(function() {
+                    // if MIN and MAX are invalid for some reason, I think this'll crash the rendering
+                    color_scale = d3.scaleLog().domain([MIN_COUNT, MAX_COUNT]).range([0, 1]).base(10);
+                })
+                .enter().append('rect')
+                    .attr('width', colwidth)
+                    .attr('height', rowheight)
+                    .attr('y', function(d, i) {
+                        return height - ((i + 1) * rowheight);
+                    })
+                    .style('fill', function(d) {
+                        return getColorLinear(color_scale(d['tweets'].length));
+                    });
+
+        d3.selectAll('rect').on('mouseover', function(d, i) {
+            d3.select(this).attr('opacity', 0.5);
+        });
+        
+        d3.selectAll('rect').on('mouseout', function(d, i) {
+            d3.select(this).attr('opacity', 1.0);
+        });
+        
+        d3.selectAll('svg').selectAll('rect').on('click', function(d, i) {
+            let date = new Date(week2Date(selectedMin).getTime() + (d['week'] * milli2week))
+            d3.selectAll('.detail').remove();
+            d3.select('#tooltip').style('display', 'none');
+            d3.select('#header')
+                .style('display', 'unset')
+                .text("Showing all " + d['tweets'].length + " tweets from the week of " +
+                    date.toDateString() + " with scores between " + getBinRange(i)[0] + " and " + getBinRange(i)[1]);
+            d3.select('.details').selectAll(".detail").data(d['tweets'])
+            .enter().append('span')
+                .html(function(d, i) {
+                    return "<b>" + d['score'] + "</b>: " + d['text'];
+                })
+                .attr("class", "detail");
+        });
+        
+        let left = week2Date(selectedMin);
+        let right = week2Date(selectedMax);
+        let xTicks = [];
+        let numTicks = 19;
+        if (selectedMax - selectedMin < numTicks) {
+            numTicks = selectedMax - selectedMin + 1;
+        }
+        let step = Math.round((selectedMax - selectedMin) / numTicks);
+        let xScale = d3.scaleTime().domain([left, right]).range([colwidth / 2, width - (colwidth / 2)]);
+        for (let i = selectedMin; i <= selectedMax; i = i + step) {
+            xTicks.push(week2Date(i))
+        }
+        
+        d3.select('.heatmap').select('svg').append('g')
+            .classed('x axis', true)
+            .attr('transform', 'translate(' + leftMargin + ', ' + (topMargin + height - 1) + ')')
+            .call(d3.axisBottom(xScale)
+                .tickFormat(d3.timeFormat('%m-%d-%Y'))
+                .tickValues(xTicks)
+                .tickSizeOuter(0));
+        
+        let halftick = height / (2 * numBins);
+        let yScale = d3.scaleLinear().domain([0, numBins - 1]).range([height - halftick, halftick]);
+        let yTicks = [];
+        for (let i = 0; i < numBins; i++) {
+            yTicks.push(i);
+        }
+        
+        d3.select('.heatmap').select('svg').append('g')
+            .classed('y axis', true)
+            .attr('transform', 'translate(' + leftMargin + ', ' + topMargin + ')')
+            .call(d3.axisLeft(yScale)
+                .tickFormat(function(d) {
+                    let range = getBinRange(d);
+                    return range[0] + " to " + range[1];
+                })
+                .tickValues(yTicks));
+                
+        d3.select('.heatmap').select('svg').append('text')
+            .attr('x', leftMargin + (width / 2))
+            .attr('y', topMargin + height + 40)
+            .style('font-size', 18)
+            .style('text-anchor', 'middle')
+            .text('Date');
+            
+        d3.select('.heatmap').select('svg').append('text')
+            .attr('x', -(topMargin + (height / 2)))
+            .attr('y', leftMargin - 75)
+            .attr('transform', 'rotate(-90)')
+            .style('font-size', 18)
+            .style('text-anchor', 'middle')
+            .text('Sentiment Score');
+        
+        d3.select('.heatmap').select('svg').append('svg')
+            .attr('x', leftMargin + width + 40)
+            .attr('y', topMargin)
+            .attr('width', 35)
+            .attr('height', height)
+            .selectAll('rect').data(barData)
+            .enter().append('rect')
+                .attr('height', 1)
+                .attr('width', 35)
+                .attr('y', function(d, i) {
+                    return i;
+                })
+                .style('fill', function(d, i) {
+                    return d;
+                });
+        
+        let zScale = d3.scaleLog().domain([MIN_COUNT, MAX_COUNT]).range([0, height]).base(10);
+        let zTicks = [];
+        
+        for (let i = 1; i < MAX_COUNT; i = i * 10) {
+            if (i > MIN_COUNT && zScale(MAX_COUNT) - zScale(i) > 10)
+                zTicks.push(i);
+        }
+        
+        zTicks.push(MAX_COUNT);
+        zTicks.push(MIN_COUNT);
+        
+        d3.select('.heatmap').select('svg').append('g')
+            .classed('y axis', true)
+            .attr('transform', 'translate(' + (leftMargin + width + 40 + 37) + ', ' + topMargin + ')')
+            .call(d3.axisRight(zScale)
+                .tickFormat(function(d) {
+                    return d
+                })
+                .tickValues(zTicks));
+                
+        d3.select('.heatmap').select('svg').append('text')
+            .attr('x', topMargin + (height / 2))
+            .attr('y', -(leftMargin + width + 110))
+            .attr('transform', 'rotate(90)')
+            .style('font-size', 18)
+            .style('text-anchor', 'middle')
+            .text('Number of Tweets')
+            
+        d3.select('.heatmap').select('svg').append('text')
+            .attr('x', leftMargin + (width / 2))
+            .attr('y', topMargin / 2)
+            .style('font-size', 24)
+            .style('text-anchor', 'middle')
+            .text('Twitter Sentiment over Time')
+
+    }
+    
+    let minInput = document.getElementById("min-date");
+    let maxInput = document.getElementById("max-date");
+    
+    minInput.setAttribute("max", numWeeks);
+    minInput.setAttribute("value", numWeeks - 52);
+    maxInput.setAttribute("max", numWeeks);
+    maxInput.setAttribute("value", numWeeks);
+    
+    var renderTimeout;
+    
+    function changeSettings() {
+        if (renderTimeout != undefined) {
+            clearTimeout(renderTimeout);
+        }
+        renderTimeout = setTimeout(function() {
+            render();
+        }, 250);
+    }
+    
+    minInput.oninput = changeSettings;
+    maxInput.oninput = changeSettings;
+    document.getElementById("num-bins").oninput = changeSettings;
+    document.getElementById("hide-objective").oninput = changeSettings;
+    
+    // draw labels
+    // this seems like a really stupid way to do this
+    // but I don't know enough about CSS to do it any better
+    
+    function drawSettingsLabels() {
+        let rect = minInput.getBoundingClientRect();
+        for (let i = 0; i <= numWeeks; i++) {
+            let date = week2Date(i);
+            if (date.getMonth() == 0 && date.getDate() <= 7) {
+                let label = document.createElement("div");
+                label.classList.add("settings-label");
+                label.innerHTML = date.getFullYear();
+                label.style.left = (rect.left + (rect.width * (i / numWeeks))) + 'px';
+                document.getElementById("date-labels").appendChild(label);
+            }
+        }
+        for (let i = 1; i <= 21; i = i + 2) {
+            let label = document.createElement("div");
+            label.classList.add("settings-label");
+            label.innerHTML = i;
+            label.style.left = (rect.left + (rect.width * ((i - 1) / 20))) + 'px';
+            document.getElementById("bin-labels").appendChild(label);
+        }
+    }
+    
+    addEventListener("resize", function() {
+        let labels = document.getElementsByClassName("settings-label");
+        for (let i = labels.length - 1; i >= 0; i--) {
+            let label = labels[i];
+            label.outerHTML = "";
+        }
+        drawSettingsLabels();
+    });
+    
+    drawSettingsLabels();
+    render();
+    
+</script>
